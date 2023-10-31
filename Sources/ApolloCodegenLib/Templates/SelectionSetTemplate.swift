@@ -510,7 +510,7 @@ struct SelectionSetTemplate {
     return TemplateString("""
     \(if: !isConcreteType, "__typename: String\(if: !allFields.isEmpty, ",")")
     \(IteratorSequence(allFields).map({
-      InitializerParameterTemplate($0, scope: selectionSet.scope)
+      InitializerParameterTemplate($0, isOptional: $0.isOptional(scope: selectionSet.scope))
     }))
     """
     )
@@ -518,10 +518,9 @@ struct SelectionSetTemplate {
 
   private func InitializerParameterTemplate(
     _ field: IR.Field,
-    scope: IR.ScopeDescriptor
+    isOptional: Bool
   ) -> TemplateString {
-    let isOptional: Bool = field.type.isNullable || field.isConditionallyIncluded(in: scope)
-    return """
+    """
     \(field.responseKey.renderAsFieldPropertyName(config: config.config)): \(typeName(for: field, forceOptional: isOptional))\
     \(if: isOptional, " = nil")
     """
@@ -533,18 +532,25 @@ struct SelectionSetTemplate {
     let isConcreteType = selectionSet.parentType is GraphQLObjectType
     let allFields = selectionSet.selections.makeFieldIterator()
 
+    let fieldMap = IteratorSequence(allFields).map { field in
+      InitializerDataDictFieldTemplate(
+        field,
+        isOptional: field.isOptional(scope: selectionSet.scope))
+    }
+
     return TemplateString("""
     "__typename": \
     \(if: isConcreteType,
       "\(GeneratedSchemaTypeReference(selectionSet.parentType)).typename,",
       else: "__typename,")
-    \(IteratorSequence(allFields).map(InitializerDataDictFieldTemplate(_:)), terminator: ",")
+    \(fieldMap, terminator: ",")
     """
     )
   }
 
   private func InitializerDataDictFieldTemplate(
-    _ field: IR.Field
+    _ field: IR.Field,
+    isOptional: Bool
   ) -> TemplateString {
     let isEntityField: Bool = {
       switch field.type.innerType {
@@ -555,7 +561,8 @@ struct SelectionSetTemplate {
 
     return """
     "\(field.responseKey)": \(field.responseKey.renderAsFieldPropertyName(config: config.config))\
-    \(if: isEntityField, "._fieldData")
+    \(if: isEntityField, "._fieldData")\
+    \(if: isOptional, " as AnyHashable? ?? .none")
     """
   }
 
@@ -1026,6 +1033,10 @@ fileprivate extension IR.Field {
   func isConditionallyIncluded(in scope: IR.ScopeDescriptor) -> Bool {
     guard let conditions = self.inclusionConditions else { return false }
     return !scope.matches(conditions)
+  }
+
+  func isOptional(scope: IR.ScopeDescriptor) -> Bool {
+    type.isNullable || isConditionallyIncluded(in: scope)
   }
 }
 
